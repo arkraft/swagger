@@ -3,6 +3,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication
 } from '@nestjs/platform-fastify';
+import * as request from 'supertest';
 import * as SwaggerParser from 'swagger-parser';
 import { DocumentBuilder, SwaggerModule } from '../lib';
 import { ApplicationModule } from './src/app.module';
@@ -52,26 +53,9 @@ describe('Fastify Swagger', () => {
     }
   });
 
-  it('should pass uiConfig options to fastify-swagger', async () => {
-    const document1 = SwaggerModule.createDocument(app, builder.build());
-    const uiConfig = {
-      displayOperationId: true,
-      persistAuthorization: true
-    };
-    const options = { uiConfig };
-    SwaggerModule.setup('/swagger1', app, document1, options);
-
-    const instance = await app.getHttpAdapter().getInstance().ready();
-
-    instance.ready(async () => {
-      const response = await instance.inject({
-        method: 'GET',
-        url: '/swagger1/uiConfig'
-      });
-
-      expect(response.statusCode).toEqual(200);
-      expect(JSON.parse(response.body)).toEqual(uiConfig);
-    });
+  it('should fix colons in url', async () => {
+    const document = SwaggerModule.createDocument(app, builder.build());
+    expect(document.paths['/fastify:colon:another/{prop}']).toBeDefined();
   });
 
   it('should setup multiple routes', async () => {
@@ -88,104 +72,31 @@ describe('Fastify Swagger', () => {
     ).resolves.toBeDefined();
   });
 
-  it('should pass initOAuth options to fastify-swagger', async () => {
-    const document1 = SwaggerModule.createDocument(app, builder.build());
-    const initOAuth = {
-      scopes: ['openid', 'profile', 'email', 'offline_access']
-    };
-    const options = { initOAuth };
-    SwaggerModule.setup('/swagger1', app, document1, options);
+  describe('served swagger ui', () => {
+    const SWAGGER_RELATIVE_URL = '/apidoc';
 
-    const instance = await app.getHttpAdapter().getInstance().ready();
+    beforeEach(async () => {
+      const swaggerDocument = SwaggerModule.createDocument(
+        app,
+        builder.build()
+      );
+      SwaggerModule.setup(SWAGGER_RELATIVE_URL, app, swaggerDocument);
 
-    instance.ready(async () => {
-      const response = await instance.inject({
-        method: 'GET',
-        url: '/swagger1/initOAuth'
-      });
-
-      expect(response.statusCode).toEqual(200);
-      expect(JSON.parse(response.body)).toEqual(initOAuth);
+      await app.init();
+      await app.getHttpAdapter().getInstance().ready();
     });
-  });
 
-  it('should pass staticCSP = undefined options to fastify-swagger', async () => {
-    const document1 = SwaggerModule.createDocument(app, builder.build());
-    SwaggerModule.setup('swagger1', app, document1);
-
-    const instance = await app.getHttpAdapter().getInstance().ready();
-
-    instance.ready(async () => {
-      const response = await instance.inject({
-        method: 'GET',
-        url: '/swagger1/json'
-      });
-
-      expect(response.statusCode).toEqual(200);
-      expect(response.headers['content-security-policy']).toBeUndefined();
+    afterEach(async () => {
+      await app.close();
     });
-  });
 
-  it('should pass staticCSP = true options to fastify-swagger', async () => {
-    const document1 = SwaggerModule.createDocument(app, builder.build());
-    const options = { staticCSP: true };
-    SwaggerModule.setup('/swagger1', app, document1, options);
+    it('content type of served json document should be valid', async () => {
+      const response = await request(app.getHttpServer()).get(
+        `${SWAGGER_RELATIVE_URL}-json`
+      );
 
-    const instance = await app.getHttpAdapter().getInstance().ready();
-
-    instance.ready(async () => {
-      const response = await instance.inject({
-        method: 'GET',
-        url: '/swagger1/json'
-      });
-
-      expect(response.statusCode).toEqual(200);
-      expect(response.headers['content-security-policy']).toContain(`script-src 'self' 'sha256`);
-      expect(response.headers['content-security-policy']).toContain(`style-src 'self' https: 'sha256`);
-    });
-  });
-
-  it('should pass staticCSP = false options to fastify-swagger', async () => {
-    const document1 = SwaggerModule.createDocument(app, builder.build());
-    const options = { staticCSP: false };
-    SwaggerModule.setup('/swagger1', app, document1, options);
-
-    const instance = await app.getHttpAdapter().getInstance().ready();
-
-    instance.ready(async () => {
-      const response = await instance.inject({
-        method: 'GET',
-        url: '/swagger1/json'
-      });
-
-      expect(response.statusCode).toEqual(200);
-      expect(response.headers['content-security-policy']).toBeUndefined();
-    });
-  });
-
-  it('should pass transformStaticCSP = function options to fastify-swagger', async () => {
-    const document1 = SwaggerModule.createDocument(app, builder.build());
-    const checkParam = jest.fn((param: string) => param);
-    const options = {
-      staticCSP: `default-src 'self';`,
-      transformStaticCSP: (header: string) => {
-        checkParam(header);
-        return `default-src 'self'; script-src 'self';`
-      }
-    };
-    SwaggerModule.setup('/swagger1', app, document1, options);
-
-    const instance = await app.getHttpAdapter().getInstance().ready();
-
-    instance.ready(async () => {
-      const response = await instance.inject({
-        method: 'GET',
-        url: '/swagger1/json'
-      });
-
-      expect(checkParam).toBeCalledWith(`default-src 'self';`);
-      expect(response.statusCode).toEqual(200);
-      expect(response.headers['content-security-policy']).toEqual(`default-src 'self'; script-src 'self';`);
+      expect(response.status).toEqual(200);
+      expect(Object.keys(response.body).length).toBeGreaterThan(0);
     });
   });
 });
